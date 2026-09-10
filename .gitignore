@@ -29,3 +29,5 @@ extract.py
 guide_text.txt
 cert.pem
 key.pem
+*.zip
+recordings/

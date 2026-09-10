@@ -1,140 +1,102 @@
 # Scales, heard. 🎸
 
-A fretboard **scale guide** in the browser that **listens to your real guitar** and tells you whether the note you played is in the scale — no quiz answer typing, just play.
+A powerful, ultra low-latency fretboard **scale guide & practice studio** in the browser and desktop that **listens to your real electric & bass guitar** in real-time.
 
-- **Practice mode** — play any note; it shows the note name, scale degree, and whether it's *in scale ✓* or *out of scale ✗*.
-- **Quiz mode** — it asks for a note (by name or degree); find it anywhere on the neck and play it. Tracks score & streak.
-- **Matching is by note name only** (octave-independent). It does not care which string/fret you use.
-- Fretboard visualizer: root = red, scale tones = blue, the note you just played glows white.
-- Key transpose, degree ↔ note-name toggle, right/left-hand flip, sensitivity & stability controls, input-device picker, live tuner meter.
-- **Multilingual** (한국어 / English / 日本語) — add your own in one file.
-
-No build step, no framework, no dependencies. Pure HTML + CSS + JavaScript + the Web Audio API.
-
-## Run it
-
-The microphone needs a secure context, so serve it over `http://localhost` (not `file://`). Easiest options:
-
-**VS Code** — install the *Live Server* extension (recommended in `.vscode/extensions.json`), then right-click `index.html` → *Open with Live Server*.
-
-**Python** (no install) —
-```bash
-python -m http.server 8000
-# then open http://localhost:8000
-```
-
-**Node** —
-```bash
-npx serve .
-```
-
-Then click **Start mic**, pick your audio interface as the input device, and play.
+[![Release](https://img.shields.io/badge/Release-v2.1.0-blue.svg)](https://github.com/ManofKimchi08/guitar-scale-tuner/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Web-brightgreen.svg)]()
 
 ---
 
-## ⚡ Low-Latency ASIO Mode (Python WebSocket Server)
+## 📸 Screenshots & UI Tour
 
-For professional, low-latency audio capture (especially on Windows) and **Polyphonic Chord/6-String Tuner recognition**, you can stream audio via the Python ASIO WebSocket bridge.
+| 🎸 6-String Guitar Fretboard & HUD |
+| :---: |
+| ![6-String Guitar View](docs/screenshots/screenshot_main.png) |
 
-### 1. Requirements & Installation
-
-Ensure you have Python 3.8+ installed, then install dependencies:
-```bash
-pip install numpy sounddevice websockets pypdf
-```
-*On Windows, `sounddevice` naturally supports low-latency WASAPI and ASIO drivers.*
-
-### 2. Run the Audio Server
-
-1. **Find your audio input device index**:
-   ```bash
-   python asio_server.py --list
-   ```
-   *Look for your USB Audio interface or ASIO driver in the list and note its ID number.*
-
-2. **Start the server**:
-   - **Option A (Interactive Script)**: Double-click **`run_server.bat`** (Windows only). It will list the devices and prompt you to type the device index number.
-   - **Option B (Manual command)** (e.g. if device index is `46`):
-     ```bash
-     python asio_server.py --device 46
-     ```
-   *The server will start listening on `ws://localhost:8765`.*
-
-### 3. Connect the App
-
-1. Serve the frontend (using VS Code Live Server or python http.server).
-2. Open the page, select **`⚡ ASIO (Python Server)`** from the **Input device** dropdown.
-3. Click **▶ Start mic** to link with the Python server and stream real-time pitch data.
-
-### 4. Packaging as a Standalone Executable (Optional)
-
-If distributing to non-technical users, you can compile the Python server into a standalone Windows `.exe` file using PyInstaller:
-1. Install PyInstaller:
-   ```bash
-   pip install pyinstaller
-   ```
-2. Build the executable:
-   ```bash
-   pyinstaller --onefile asio_server.py
-   ```
-3. The executable will be generated at `dist/GuitarScaleTuner.exe`. Users can run this executable without installing Python or any packages. (You can also update `run_server.bat` to run `dist/GuitarScaleTuner.exe` instead).
+| 🎸 4-String Bass Guitar (Thick Wound Strings & 1-5-8 Groove Guide) | 🎙️ 3-Tier Recording Studio & Performance Replay |
+| :---: | :---: |
+| ![4-String Bass View](docs/screenshots/screenshot_bass.png) | ![Recording Studio Drawer](docs/screenshots/screenshot_recording.png) |
 
 ---
 
-## 🎧 Voicemeeter & Low-Latency Optimization Guide (보이스미터 & 레이턴시 최적화 가이드)
+## 🌟 Key Features (v2.1.0)
 
-오디오 인터페이스(기타 입력)와 메인보드 리얼텍(Realtek 헤드셋/스피커 출력) 혼용 시 지연 시간(레이턴시)을 3~5ms 대로 최소화하는 가이드입니다.
+### 1. 🎸 6-String Guitar & 4-String Bass Support
+- **Dual Instrument Engine**: Instant toggle between `🎸 6-String Guitar` and `🎸 4-String Bass`.
+- **30.0Hz Sub-Bass Detection**: Extends pitch detection down to B0 (30.87Hz), Drop D (36.7Hz), and E1 (41.2Hz) with auto-switching 4096 FFT buffers.
+- **1-5-8 Groove Interval Guide**: Visual amber rings accent the Root (1st), 5th, and Octave (8th) positions essential for bassists.
 
-### 1. 보이스미터(Voicemeeter) 버퍼 & 드라이버 설정
-- **A1 출력 드라이버 변경**: `MME: Realtek` 대신 **`WDM: Realtek`** 또는 **`KS: Realtek` (Kernel Streaming)** 선택.
-- **버퍼 크기 대폭 축소**: `Menu` ➔ `System Settings / Options` ➔ `Buffering WDM`을 **`128`** 또는 **`256`** samples로 설정 *(128 samples 시 지연 약 2.6ms)*.
-- **샘플 레이트 통일**: `Preferred Sample Rate`를 **`48000 Hz`**로 통일.
+### 2. 🎙️ 3-Tier Recording Studio & Smart Scorecard
+- **Tier 1 (Instant Browser REC)**: One-click recording of guitar audio directly into memory. Supports optional simultaneous mixing of **backing tracks & metronome**. Export as DAW-ready 16-bit lossless `.wav`.
+- **Tier 2 (ASIO Studio Lossless)**: Direct 32-bit Float PCM disk streaming to `recordings/ASIO_Take_*.wav`.
+- **Tier 3 (Smart Analysis & Synced Replay)**: Automated performance scorecard computing **Total Notes**, **Scale Accuracy (%)**, and **Pitch Stability (%)**. Includes an interactive **Synced Fretboard Replay** that animates your original fingering and HUD meter in lockstep with the recorded audio.
 
-### 2. ASIO4ALL / FlexASIO 초저지연 드라이버 활용 (가장 추천 ⚡)
-- [ASIO4ALL 공식 사이트(asio4all.org)](https://asio4all.org/) 무료 설치 후 제어판에서:
-  - **입력(Input)**: 오디오 인터페이스 (`USB Audio CODEC` 등) 활성화
-  - **출력(Output)**: Realtek 헤드셋 활성화
-  - **버퍼 크기**: **`128 Samples`** 이하로 지정하여 3~5ms 초저지연 달성.
+### 3. 🎛️ Adaptive Sample Rate Negotiation (Zero PaErrorCode -9997)
+- **Automatic Hardware Rate Detection**: Probes device native sample rates (`48000Hz`, `44100Hz`, `96000Hz`, etc.) and automatically adapts stream configurations on Windows WASAPI, ASIO, DirectSound, and USB Audio CODECs.
+- **Dynamic DSP Re-computation**: Recalculates FFT bin width and NNLS harmonic dictionary matrices on the fly, guaranteeing 100% pitch accuracy regardless of sample rate.
 
-### 3. 웹 UI `실시간 모니터링 (소리 출력)` 중복 재생 해제
-- 보이스미터나 오디오 인터페이스로 기타 소리를 이미 직접 듣고 계시다면, **웹 화면 하단 `실시간 모니터링 (소리 출력)` 체크박스를 해제**해 주세요. 중복 오디오 지연 없이 100% 쾌적하게 음정 인식 및 지판 가이드만 수행합니다.
+### 4. ⚡ High-Performance Hybrid Audio Engine
+- **Single-Process Dual-Thread**: Bundles local HTTP server and WebSocket ASIO engine into a lightweight background process.
+- **DOM Thrashing Elimination**: Fretboard SVG structure is rendered once and cached; dynamic note changes execute via $O(1)$ CSS class toggles.
+- **Multilingual Support**: Fully localized in 한국어 (Korean), English, and 日本語 (Japanese).
 
-## How it works
+---
 
-There is no Web API for ASIO — browsers can't use ASIO drivers directly. Instead this app captures your audio interface through `getUserMedia` + Web Audio, with echo cancellation / noise suppression / auto-gain all disabled (those mangle pitch). The fundamental frequency is found with an autocorrelation (ACF2+) detector, converted to a MIDI note → pitch class, and compared against the selected scale. If you truly need ASIO-level latency, wrap the same logic in Electron with a native PortAudio module.
+## 🚀 Quick Start
 
-Files:
+### Option A: Windows One-Click Executable (Recommended)
+Download and run `GuitarScaleTuner.exe` from [Releases](https://github.com/ManofKimchi08/guitar-scale-tuner/releases). No installation or Python required.
+
+### Option B: Run from Source
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/ManofKimchi08/guitar-scale-tuner.git
+   cd guitar-scale-tuner
+   ```
+2. Install Python dependencies:
+   ```bash
+   pip install numpy sounddevice websockets
+   ```
+3. Launch the unified engine:
+   ```bash
+   python GuitarScaleTuner.py
+   ```
+   *Your browser will automatically open `http://localhost:8000`.*
+
+---
+
+## 📖 Deep-Dive Technical Documentation
+
+For in-depth mathematical formulations, DSP algorithms, coordinate descent NNLS chroma solver, and complete architecture diagrams, please read:
+
+👉 **[docs/TECHNICAL_DOCUMENTATION.md](docs/TECHNICAL_DOCUMENTATION.md)**
+
+---
+
+## 🛠️ Project Structure
 
 ```
-index.html        # markup, data-i18n hooks
-src/style.css     # all styling (CSS variables for theming)
-src/i18n.js       # all UI strings, one object per language
-src/main.js       # music data, pitch detection, fretboard, app logic
+guitar-scale-tuner/
+├── GuitarScaleTuner.py       # Unified entrypoint (Daemon HTTP + ASIO WebSocket)
+├── asio_server.py            # Adaptive sample rate sounddevice capture & NNLS solver
+├── run_https_server.py       # Path-traversal safe local HTTP web server
+├── build_exe.py              # PyInstaller Windows executable packager
+├── index.html                # Responsive studio GUI markup
+├── src/
+│   ├── main.js               # Web Audio API, SVG fretboard renderer, 3-Tier REC
+│   ├── style.css             # Dark studio glassmorphism theme
+│   ├── i18n.js               # Multi-language dictionary (KR / EN / JP)
+│   └── favicon.svg           # High-resolution vector brand icon
+├── docs/
+│   ├── TECHNICAL_DOCUMENTATION.md  # Engineering whitepaper & DSP spec
+│   └── screenshots/          # High-resolution UI screenshots
+├── favicon.ico / favicon.png # Windows binary & web application icons
+└── recordings/               # Output directory for ASIO lossless WAV takes
 ```
 
-## Add a language
+---
 
-Open `src/i18n.js`:
+## 📄 License
 
-1. Copy the whole `en: { ... }` block.
-2. Rename the key (e.g. `es` for Spanish) and translate every value.
-3. Add a display name to `LANG_NAMES`.
-
-The language picker updates automatically. Note names (C, C#, …) and degree labels (1, b2, …) are standard notation and are intentionally left untranslated.
-
-## Roadmap ideas
-
-- Metronome and chord-progression backing tracks (like the original tool).
-- Chord mode: detect whether a played note is a chord tone vs. tension over a backing track.
-- `fftSize` toggle (4096) for stronger low-E detection.
-- Quiz timer / mistakes counter.
-
-PRs welcome.
-
-## Acknowledgements
-
-Inspired by **"에휴 (Ehyo)"**, a guitar-practice tool (metronome + fretboard scale guide + chord backing tracks) shared on the DCInside electric-guitar gallery: <https://ehyo.up.railway.app/>. This project is an independent, from-scratch reimplementation focused on the live-recognition idea; no original code was reused.
-
-## License
-
-[MIT](LICENSE) — free to use, modify, and distribute.
+Distributed under the [MIT](LICENSE) License. Free to use, modify, and distribute for personal and commercial projects.

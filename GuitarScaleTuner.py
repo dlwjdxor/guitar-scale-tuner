@@ -29,7 +29,7 @@ def main():
     # 1. Run HTTP Web Server in background daemon thread
     web_thread = threading.Thread(
         target=run_server,
-        kwargs={"port": active_port},
+        kwargs={"port": active_port, "directory": base_dir},
         daemon=True
     )
     web_thread.start()

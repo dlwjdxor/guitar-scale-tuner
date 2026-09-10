@@ -7,8 +7,9 @@ import sys
 import numpy as np
 import sounddevice as sd
 import websockets
-
 import os
+import wave
+import datetime
 
 if sys.stdout is None:
     sys.stdout = open(os.devnull, 'w')
@@ -67,12 +68,12 @@ def nnls_coordinate_descent(AtA, Aty, max_iter=15):
 def precompute_A(sample_rate, buffer_size, ref_pitch):
     """Precomputes dictionary matrix A and AtA for a given reference pitch frequency."""
     bin_width = sample_rate / buffer_size
-    min_freq = 70.0
-    max_freq = 1200.0
+    min_freq = 30.0 # Support Bass down to B0 (30.87Hz) and E1 (41.2Hz)
+    max_freq = 1400.0
     idx_min = int(round(min_freq / bin_width))
     idx_max = int(round(max_freq / bin_width))
     M = idx_max - idx_min
-    notes_range = range(40, 89) # E2 to E6 (49 notes)
+    notes_range = range(23, 89) # B0 to F6 (66 notes covering Bass & Guitar)
     N = len(notes_range)
     A = np.zeros((M, N), dtype=np.float32)
     
@@ -126,7 +127,7 @@ def detect_pitches_nnls(audio_chunk, sr, A, AtA, idx_min, idx_max, ref_pitch=440
     chroma = np.zeros(12, dtype=np.float32)
     
     for j in range(len(x)):
-        midi = 40 + j
+        midi = 23 + j
         chroma[midi % 12] += x[j]
         
         if x[j] > 0.018:
@@ -154,7 +155,7 @@ def detect_pitches_nnls(audio_chunk, sr, A, AtA, idx_min, idx_max, ref_pitch=440
 async def audio_broadcaster(device_idx, host, port, sample_rate, buffer_size, sens_thr):
     """Captures audio from ASIO device and broadcasts detected pitches over WebSockets."""
     connected_clients = set()
-    audio_queue = asyncio.Queue()
+    audio_queue = asyncio.Queue(maxsize=3)
     loop = asyncio.get_running_loop()
     
     input_devs = get_audio_input_devices()
@@ -172,19 +173,36 @@ async def audio_broadcaster(device_idx, host, port, sample_rate, buffer_size, se
     monitor_enabled = False
     monitor_volume = 0.7
     ref_pitch_val = 440.0
+    is_asio_recording = False
+    recorded_audio_chunks = []
+
+    def push_audio(chunk):
+        nonlocal is_asio_recording, recorded_audio_chunks
+        if is_asio_recording:
+            recorded_audio_chunks.append(chunk.copy())
+        if audio_queue.full():
+            try:
+                audio_queue.get_nowait() # Drop oldest frame to eliminate latency drift
+            except Exception:
+                pass
+        try:
+            audio_queue.put_nowait(chunk)
+        except Exception:
+            pass
 
     def sd_callback(indata, outdata, frames, time_info, status):
         if status:
             logger.warning(f"SoundDevice status warning: {status}")
-        loop.call_soon_threadsafe(audio_queue.put_nowait, indata.copy()[:, 0])
+        chunk = indata[:, 0].copy() if indata.ndim > 1 else indata.copy()
+        loop.call_soon_threadsafe(push_audio, chunk)
         if monitor_enabled:
             outdata[:] = indata * monitor_volume
         else:
             outdata.fill(0)
 
     bin_width = sample_rate / buffer_size
-    min_freq = 70.0
-    max_freq = 1200.0
+    min_freq = 30.0
+    max_freq = 1400.0
     idx_min = int(round(min_freq / bin_width))
     idx_max = int(round(max_freq / bin_width))
     
@@ -196,11 +214,13 @@ async def audio_broadcaster(device_idx, host, port, sample_rate, buffer_size, se
         return json.dumps({
             "type": "asio_device_list",
             "devices": get_audio_input_devices(),
-            "current_device_id": current_device_id
+            "current_device_id": current_device_id,
+            "sample_rate": sample_rate
         })
 
     async def ws_handler(websocket):
-        nonlocal A_matrix, AtA_matrix, ref_pitch_val, monitor_enabled, monitor_volume, current_device_id
+        nonlocal A_matrix, AtA_matrix, ref_pitch_val, monitor_enabled, monitor_volume, current_device_id, sample_rate
+        nonlocal is_asio_recording, recorded_audio_chunks
         logger.info(f"Client connected from {websocket.remote_address}")
         connected_clients.add(websocket)
 
@@ -228,10 +248,46 @@ async def audio_broadcaster(device_idx, host, port, sample_rate, buffer_size, se
                         await websocket.send(await get_device_payload())
                     elif msg_type == "select_asio_device":
                         new_id = int(data.get("device_id"))
-                        if new_id != current_device_id:
-                            logger.info(f"Switching active audio device to #{new_id}")
-                            current_device_id = new_id
-                            stream_restart_event.set()
+                        logger.info(f"Switching active audio device to #{new_id}")
+                        current_device_id = new_id
+                        stream_restart_event.set()
+                    elif msg_type == "start_asio_recording":
+                        is_asio_recording = True
+                        recorded_audio_chunks = []
+                        logger.info("Started ASIO studio lossless recording")
+                        for c in list(connected_clients):
+                            try:
+                                await c.send(json.dumps({"type": "asio_recording_started"}))
+                            except Exception:
+                                pass
+                    elif msg_type == "stop_asio_recording":
+                        is_asio_recording = False
+                        logger.info(f"Stopped ASIO recording ({len(recorded_audio_chunks)} chunks)")
+                        if recorded_audio_chunks:
+                            try:
+                                os.makedirs("recordings", exist_ok=True)
+                                ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                                fname = os.path.join("recordings", f"ASIO_Take_{ts}.wav")
+                                all_pcm = np.concatenate(recorded_audio_chunks)
+                                int16_pcm = np.int16(np.clip(all_pcm, -1.0, 1.0) * 32767)
+                                with wave.open(fname, "wb") as wf:
+                                    wf.setnchannels(1)
+                                    wf.setsampwidth(2)
+                                    wf.setframerate(sample_rate)
+                                    wf.writeframes(int16_pcm.tobytes())
+                                duration = round(len(all_pcm) / sample_rate, 1)
+                                payload = json.dumps({
+                                    "type": "asio_recording_saved",
+                                    "filename": os.path.abspath(fname),
+                                    "duration": duration
+                                })
+                                for c in list(connected_clients):
+                                    try:
+                                        await c.send(payload)
+                                    except Exception:
+                                        pass
+                            except Exception as rec_err:
+                                logger.error(f"Error saving ASIO recording: {rec_err}")
                 except Exception as e:
                     logger.error(f"Error handling websocket message: {e}")
         except websockets.exceptions.ConnectionClosed:
@@ -258,36 +314,87 @@ async def audio_broadcaster(device_idx, host, port, sample_rate, buffer_size, se
                 current_device_id = input_devs[0]['id']
                 device_info = sd.query_devices(current_device_id)
 
-        try:
-            try:
-                stream = sd.Stream(
-                    device=current_device_id,
-                    channels=(1, 1),
-                    samplerate=sample_rate,
-                    blocksize=512,
-                    dtype='float32',
-                    callback=sd_callback
-                )
-            except Exception as duplex_e:
-                logger.info(f"Duplex stream unavailable ({duplex_e}), falling back to InputStream")
-                def input_only_callback(indata, frames, time_info, status):
-                    if status:
-                        logger.warning(f"SoundDevice status warning: {status}")
-                    loop.call_soon_threadsafe(audio_queue.put_nowait, indata.copy()[:, 0])
+        native_sr = int(device_info.get('default_samplerate', 0))
+        max_in = int(device_info.get('max_input_channels', 1))
+        max_out = int(device_info.get('max_output_channels', 0))
 
+        # Build candidate sample rates starting with the device's native rate
+        candidate_srs = []
+        if native_sr > 0:
+            candidate_srs.append(native_sr)
+        if sample_rate not in candidate_srs:
+            candidate_srs.append(sample_rate)
+        for r in [48000, 44100, 96000, 88200, 192000]:
+            if r not in candidate_srs:
+                candidate_srs.append(r)
+
+        stream = None
+        opened_sr = None
+        last_stream_err = None
+
+        def input_only_callback(indata, frames, time_info, status):
+            if status:
+                logger.warning(f"SoundDevice status warning: {status}")
+            chunk = indata[:, 0].copy() if indata.ndim > 1 else indata.copy()
+            loop.call_soon_threadsafe(push_audio, chunk)
+
+        for test_sr in candidate_srs:
+            # 1. Try Duplex Stream if output channels exist on this device
+            if max_out > 0:
+                try:
+                    stream = sd.Stream(
+                        device=current_device_id,
+                        channels=(1, 1),
+                        samplerate=test_sr,
+                        blocksize=512,
+                        dtype='float32',
+                        callback=sd_callback
+                    )
+                    opened_sr = test_sr
+                    logger.info(f"Opened duplex stream on device #{current_device_id} at {opened_sr}Hz")
+                    break
+                except Exception as duplex_e:
+                    logger.debug(f"Duplex open failed on #{current_device_id} at {test_sr}Hz: {duplex_e}")
+
+            # 2. Try InputStream (Mono input)
+            try:
                 stream = sd.InputStream(
                     device=current_device_id,
                     channels=1,
-                    samplerate=sample_rate,
+                    samplerate=test_sr,
                     blocksize=512,
                     dtype='float32',
                     callback=input_only_callback
                 )
-        except Exception as stream_err:
-            logger.error(f"Failed to open stream on device #{current_device_id}: {stream_err}")
+                opened_sr = test_sr
+                logger.info(f"Opened input stream on device #{current_device_id} at {opened_sr}Hz")
+                break
+            except Exception as in_e:
+                logger.debug(f"InputStream open failed on #{current_device_id} at {test_sr}Hz: {in_e}")
+                last_stream_err = in_e
+
+            # 3. Fallback: Try stereo input if device requires 2 channels
+            if max_in >= 2:
+                try:
+                    stream = sd.InputStream(
+                        device=current_device_id,
+                        channels=2,
+                        samplerate=test_sr,
+                        blocksize=512,
+                        dtype='float32',
+                        callback=input_only_callback
+                    )
+                    opened_sr = test_sr
+                    logger.info(f"Opened stereo input stream on device #{current_device_id} at {opened_sr}Hz")
+                    break
+                except Exception as in2_e:
+                    last_stream_err = in2_e
+
+        if stream is None:
+            logger.error(f"Failed to open stream on device #{current_device_id} with tested rates {candidate_srs}: {last_stream_err}")
             err_payload = json.dumps({
                 "type": "asio_error",
-                "message": f"선택한 장치를 열 수 없습니다: {stream_err}. 다른 오디오 장치(WASAPI/DirectSound)를 선택해 주세요."
+                "message": f"선택한 장치를 열 수 없습니다: {last_stream_err}. 다른 오디오 장치(WASAPI/DirectSound)를 선택해 주세요."
             })
             for client in list(connected_clients):
                 try:
@@ -297,10 +404,24 @@ async def audio_broadcaster(device_idx, host, port, sample_rate, buffer_size, se
             await stream_restart_event.wait()
             continue
 
+        actual_sr = int(stream.samplerate)
+        if actual_sr != sample_rate:
+            logger.info(f"Sample rate adapted: {sample_rate}Hz -> {actual_sr}Hz for device #{current_device_id}")
+            sample_rate = actual_sr
+            bin_width = sample_rate / buffer_size
+            idx_min = int(round(min_freq / bin_width))
+            idx_max = int(round(max_freq / bin_width))
+            A_matrix, AtA_matrix = precompute_A(sample_rate, buffer_size, ref_pitch_val)
+
         payload_dev = await get_device_payload()
         for client in list(connected_clients):
             try:
                 await client.send(payload_dev)
+                await client.send(json.dumps({
+                    "type": "asio_stream_started",
+                    "device_id": current_device_id,
+                    "sample_rate": sample_rate
+                }))
             except Exception:
                 pass
 

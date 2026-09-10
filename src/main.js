@@ -21,7 +21,7 @@ const SCALES = {
 };
 const SCALE_IDS = Object.keys(SCALES);
 
-const TUNINGS = {
+const GUITAR_TUNINGS = {
   standard: [64, 59, 55, 50, 45, 40],
   half_down: [63, 58, 54, 49, 44, 39],
   whole_down: [62, 57, 53, 48, 43, 38],
@@ -32,7 +32,36 @@ const TUNINGS = {
   open_g: [62, 59, 55, 50, 43, 38],
   open_d: [62, 57, 54, 50, 45, 38]
 };
-const TUNING_IDS = Object.keys(TUNINGS);
+
+const BASS_TUNINGS = {
+  bass_standard: [43, 38, 33, 28],      // G2, D2, A1, E1 (41.2Hz)
+  bass_drop_d: [43, 38, 33, 26],        // G2, D2, A1, D1 (36.7Hz)
+  bass_half_down: [42, 37, 32, 27],     // Gb2, Db2, Ab1, Eb1
+  bass_d_standard: [41, 36, 31, 26]     // F2, C2, G1, D1
+};
+
+let currentInstrument = "guitar"; // "guitar" | "bass"
+
+function getTuningsForInstrument() {
+  return (currentInstrument === "bass") ? BASS_TUNINGS : GUITAR_TUNINGS;
+}
+
+const TUNINGS = new Proxy({}, {
+  get(target, prop) {
+    const tDict = getTuningsForInstrument();
+    return tDict[prop] || GUITAR_TUNINGS[prop] || BASS_TUNINGS[prop];
+  },
+  has(target, prop) {
+    const tDict = getTuningsForInstrument();
+    return prop in tDict || prop in GUITAR_TUNINGS || prop in BASS_TUNINGS;
+  },
+  ownKeys() {
+    return Object.keys(getTuningsForInstrument());
+  },
+  getOwnPropertyDescriptor(target, prop) {
+    return { enumerable: true, configurable: true, value: this.get(target, prop) };
+  }
+});
 
 const CIRCLE_MAJOR = ["C", "G", "D", "A", "E", "B", "F#", "Db", "Ab", "Eb", "Bb", "F"];
 const CIRCLE_MINOR = ["Am", "Em", "Bm", "F#m", "C#m", "G#m", "D#m", "Bbm", "Fm", "Cm", "Gm", "Dm"];
@@ -45,7 +74,7 @@ const JAM_PROGRESSIONS = {
 };
 
 let currentTuningId = "standard";
-let strings = [...TUNINGS[currentTuningId]];
+let strings = [...GUITAR_TUNINGS[currentTuningId]];
 let tuningMode = "preset"; // "preset" | "custom"
 let guideMode = "scale"; // "scale" | "chord"
 let chordTypeVal = "major"; // "major" | "minor" | "dom7" | "maj7" | "min7"
@@ -450,6 +479,25 @@ function connectAsioWs() {
           currentAsioDeviceId = data.current_device_id;
           rebuildDeviceDropdown();
         }
+        if (data.type === "asio_recording_saved") {
+          const asioNotice = $("asioRecNotice");
+          if (asioNotice) {
+            asioNotice.style.display = "flex";
+            const fileTxt = $("asioRecFileTxt");
+            if (fileTxt) fileTxt.textContent = `${data.filename} (${data.duration}s)`;
+          }
+          return;
+        }
+        if (data.type === "asio_stream_started") {
+          $("err").textContent = "";
+          $("verdict").textContent = t("verdictAsioConnected");
+          $("verdict").className = "verdict ok";
+          return;
+        }
+        if (data.type === "asio_error") {
+          $("err").textContent = data.message;
+          return;
+        }
         if (data.pcm) {
           playAsioPcmChunk(data.pcm);
         }
@@ -482,18 +530,39 @@ function autoCorrelate(inputBuf, sr) {
   let r1 = 0, r2 = SIZE - 1, th = 0.2;
   for (let i = 0; i < SIZE / 2; i++) { if (Math.abs(inputBuf[i]) < th) { r1 = i; break; } }
   for (let i = 1; i < SIZE / 2; i++) { if (Math.abs(inputBuf[SIZE - i]) < th) { r2 = SIZE - i; break; } }
-  const b = inputBuf.slice(r1, r2), N = b.length, c = new Float32Array(N);
-  for (let i = 0; i < N; i++) { let s = 0; for (let j = 0; j < N - i; j++) s += b[j] * b[j + i]; c[i] = s; }
+  const b = inputBuf.slice(r1, r2), N = b.length;
+  if (N < 64) return { f: -1, rms };
 
-  let d = 0; while (d + 1 < N && c[d] > c[d + 1]) d++;
+  const minFreq = (currentInstrument === "bass") ? 30.0 : 65.0;
+  const maxFreq = 1400.0;
+  const minLag = Math.max(2, Math.floor(sr / maxFreq));
+  const maxLag = Math.min(N - 2, Math.ceil(sr / minFreq));
+
+  const c = new Float32Array(maxLag + 2);
+  for (let i = 0; i <= maxLag + 1; i++) {
+    let s = 0;
+    const limit = N - i;
+    for (let j = 0; j < limit; j++) s += b[j] * b[j + i];
+    c[i] = s;
+  }
+
+  let d = minLag;
+  while (d + 1 <= maxLag && c[d] > c[d + 1]) d++;
+
   let mv = -1, mp = -1;
-  for (let i = d; i < N; i++) { if (c[i] > mv) { mv = c[i]; mp = i; } }
-  let T = mp; if (T <= 0) return { f: -1, rms };
+  for (let i = d; i <= maxLag; i++) {
+    if (c[i] > mv) { mv = c[i]; mp = i; }
+  }
+
+  let T = mp;
+  if (T <= 0 || T < minLag || T > maxLag) return { f: -1, rms };
+
   const x1 = c[T - 1] || 0, x2 = c[T], x3 = c[T + 1] || 0;
   const a = (x1 + x3 - 2 * x2) / 2, bb = (x3 - x1) / 2;
   if (a) T = T - bb / (2 * a);
   const f = sr / T;
-  if (f < 70 || f > 1400) return { f: -1, rms };
+
+  if (f < minFreq || f > maxFreq) return { f: -1, rms };
   return { f, rms };
 }
 
@@ -570,10 +639,13 @@ function drawPitchCanvas() {
   ctx.stroke();
 }
 
-// ---------- Fretboard Drawing ----------
-function drawFB() {
+// ---------- Fretboard Drawing & DOM Optimization ----------
+let fretboardNoteElements = [];
+
+function renderStaticFretboard() {
   const fb = $("fb"); if (!fb) return;
   fb.innerHTML = "";
+  fretboardNoteElements = [];
 
   const frets = 15;
   const numStrings = strings.length;
@@ -639,7 +711,7 @@ function drawFB() {
     }
   });
 
-  const stringY = (sIdx) => marginY + (sIdx * (usableH / (numStrings - 1)));
+  const stringY = (sIdx) => marginY + (sIdx * (usableH / Math.max(1, numStrings - 1)));
 
   for (let s = 0; s < numStrings; s++) {
     const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
@@ -647,7 +719,8 @@ function drawFB() {
     line.setAttribute("x1", marginX); line.setAttribute("y1", y);
     line.setAttribute("x2", W - marginX); line.setAttribute("y2", y);
     line.setAttribute("stroke", "#94a3b8");
-    line.setAttribute("stroke-width", 1 + s * 0.5);
+    const strokeW = (currentInstrument === "bass") ? (2.0 + s * 1.2) : (1.0 + s * 0.5);
+    line.setAttribute("stroke-width", strokeW);
     fb.appendChild(line);
   }
 
@@ -669,12 +742,7 @@ function drawFB() {
       const inCurrentScale = inScale(midi);
       const inCurrentChord = isChordMode && currentChordPcs.includes(notePc);
 
-      const isLit = litPcs.includes(notePc);
-      const isJamTarget = isJamPlaying && jamTargetChordPcs.includes(notePc);
-
       const isVisibleTone = isChordMode ? inCurrentChord : inCurrentScale;
-
-      if (!isVisibleTone && !isLit && !voicingMode && !isJamTarget) continue;
 
       let isVoicingNote = false;
       if (voicingMode && currentVoicing) {
@@ -684,60 +752,91 @@ function drawFB() {
         }
       }
 
-      if (voicingMode && !isVoicingNote && !isLit) continue;
+      if (voicingMode && !isVoicingNote) continue;
+      if (!isVisibleTone && !voicingMode) continue;
 
       const cx = f === 0 ? (isLeftHand ? W - marginX + 15 : marginX - 15) : (fretX[f - 1] + fretX[f]) / 2;
 
       const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-      g.setAttribute("class", "note-dot");
+      let classes = "note-dot";
+      if (isRoot) classes += " is-root";
+      const interval = pc(midi - rootPc);
+      if (currentInstrument === "bass" && interval === 7) {
+        classes += " is-fifth"; // 5th degree groove accent for bass
+      }
+      g.setAttribute("class", classes);
       g.setAttribute("data-midi", midi);
+      g.setAttribute("data-pc", notePc);
 
       const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
       circle.setAttribute("cx", cx); circle.setAttribute("cy", y);
-      circle.setAttribute("r", isLit ? "14" : (isJamTarget ? "13" : "11"));
+      circle.setAttribute("r", "11");
 
       let fill = "var(--tone)";
-      if (isLit) fill = "var(--hit)";
-      else if (isJamTarget) fill = "#ffaa00";
-      else if (isRoot) fill = "var(--root)";
-
+      if (isRoot) fill = "var(--root)";
       circle.setAttribute("fill", fill);
-      if (isJamTarget && !isLit) {
-        circle.setAttribute("stroke", "#ffffff");
-        circle.setAttribute("stroke-width", "2");
-      }
       g.appendChild(circle);
 
       const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
       text.setAttribute("x", cx); text.setAttribute("y", y + 4);
       text.setAttribute("text-anchor", "middle");
-      text.setAttribute("fill", isLit ? "#0f172a" : "#ffffff");
+      text.setAttribute("fill", "#ffffff");
       text.setAttribute("font-size", "11px");
       text.setAttribute("font-weight", "bold");
 
-      const interval = pc(midi - rootPc);
       const label = labelMode === "deg" ? DEG[interval] : NOTE[notePc];
       text.textContent = label;
       g.appendChild(text);
 
       fb.appendChild(g);
+      fretboardNoteElements.push(g);
     }
   }
 }
 
-function updateTunerLabels() {
+function updateFretboardLit() {
+  for (let i = 0; i < fretboardNoteElements.length; i++) {
+    const g = fretboardNoteElements[i];
+    const notePc = parseInt(g.getAttribute("data-pc"), 10);
+    const isLit = litPcs.includes(notePc);
+    const isJamTarget = isJamPlaying && jamTargetChordPcs.includes(notePc);
+
+    g.classList.toggle("is-lit", isLit);
+    g.classList.toggle("is-jam", isJamTarget && !isLit);
+  }
+}
+
+function drawFB() {
+  renderStaticFretboard();
+  updateFretboardLit();
+}
+
+function rebuildTunerUI() {
   const tunerLayout = $("tunerLayout");
   if (!tunerLayout) return;
-  const tunerStrings = tunerLayout.querySelectorAll(".tuner-string");
-  tunerStrings.forEach(el => {
-    const idx = parseInt(el.getAttribute("data-string-idx"), 10);
-    const midi = strings[idx];
-    if (isNaN(midi)) return;
-    const stringNum = idx + 1;
-    const label = stringNum + NOTE[pc(midi)];
-    const labelEl = el.querySelector(".string-label");
-    if (labelEl) labelEl.textContent = label;
-  });
+  tunerLayout.innerHTML = "";
+  const numStrings = strings.length;
+  for (let i = 0; i < numStrings; i++) {
+    const stringDiv = document.createElement("div");
+    stringDiv.className = "tuner-string";
+    stringDiv.setAttribute("data-string-idx", i);
+
+    const peg = document.createElement("div");
+    peg.className = "tuning-peg";
+
+    const label = document.createElement("span");
+    label.className = "string-label";
+    const midi = strings[i];
+    label.textContent = `${i + 1}${NOTE[pc(midi)]}`;
+
+    stringDiv.appendChild(peg);
+    stringDiv.appendChild(label);
+    tunerLayout.appendChild(stringDiv);
+  }
+}
+
+function updateTunerLabels() {
+  rebuildTunerUI();
 }
 
 function updateTunerUI(detected) {
@@ -748,10 +847,11 @@ function updateTunerUI(detected) {
 
   if (!detected || detected.length === 0) return;
 
+  const numStrings = strings.length;
   detected.forEach(n => {
     let minDiff = Infinity;
     let closestIdx = -1;
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < numStrings; i++) {
       const diff = Math.abs(n.midi - strings[i]);
       if (diff < minDiff) {
         minDiff = diff;
@@ -767,6 +867,7 @@ function updateTunerUI(detected) {
         el.classList.add("active");
         if (Math.abs(cents) < 10) {
           el.classList.add("in-tune");
+          el.classList.add("tuned");
         } else if (cents < 0) {
           el.classList.add("flat");
         } else {
@@ -858,7 +959,7 @@ function updatePoly(data) {
     litPcs = [];
   }
 
-  drawFB();
+  updateFretboardLit();
   updateTunerUI(activeNotes);
 
   if (activeNotes.length === 0) {
@@ -876,6 +977,18 @@ function updatePoly(data) {
   updatePitchTracker(cents);
   $("hz").textContent = activeNotes.map(n => `${Math.round(n.f)}Hz`).join(" · ");
   $("needle").style.left = `${50 + Math.max(-50, Math.min(50, cents))}%`;
+
+  if (isRecording) {
+    const elapsed = (Date.now() - recStartTime) / 1000;
+    recordingTimeline.push({
+      t: elapsed,
+      note: NOTE[pc(firstMidi)],
+      midi: firstMidi,
+      cents: cents,
+      inScale: inScale(firstMidi),
+      deg: DEG[pc(firstMidi - rootPc)]
+    });
+  }
 
   if (quizMode) {
     const p = pc(firstMidi);
@@ -927,7 +1040,7 @@ function update(res) {
     v.textContent = (guideMode === "chord") ? t("verdictOutChord") : t("verdictOutScale");
     v.className = "verdict idle";
     litPcs = [];
-    drawFB();
+    updateFretboardLit();
     updateTunerUI([]);
     return;
   }
@@ -938,10 +1051,22 @@ function update(res) {
 
   updatePitchTracker(cents);
   litPcs = [p];
-  drawFB();
+  updateFretboardLit();
   updateTunerUI([{ f: res.f, midi: m }]);
   $("hz").textContent = `${Math.round(res.f)}Hz`;
   $("needle").style.left = `${50 + Math.max(-50, Math.min(50, cents))}%`;
+
+  if (isRecording) {
+    const elapsed = (Date.now() - recStartTime) / 1000;
+    recordingTimeline.push({
+      t: elapsed,
+      note: NOTE[p],
+      midi: m,
+      cents: cents,
+      inScale: inScale(m),
+      deg: DEG[pc(m - rootPc)]
+    });
+  }
 
   if (quizMode) {
     if (guideMode === "chord") {
@@ -1011,7 +1136,8 @@ async function connect(id) {
   if (stream) stream.getTracks().forEach(tk => tk.stop());
   stream = await getStream(id);
   source = audioCtx.createMediaStreamSource(stream);
-  analyser = audioCtx.createAnalyser(); analyser.fftSize = 2048;
+  analyser = audioCtx.createAnalyser(); 
+  analyser.fftSize = (currentInstrument === "bass") ? 4096 : 2048;
   buf = new Float32Array(analyser.fftSize);
   source.connect(analyser);
 
@@ -1044,7 +1170,18 @@ async function start() {
 
 function stop() {
   running = false; if (raf) cancelAnimationFrame(raf);
-  if (stream) stream.getTracks().forEach(tk => tk.stop());
+  if (source) {
+    try { source.disconnect(); } catch (e) { }
+    source = null;
+  }
+  if (analyser) {
+    try { analyser.disconnect(); } catch (e) { }
+    analyser = null;
+  }
+  if (stream) {
+    stream.getTracks().forEach(tk => tk.stop());
+    stream = null;
+  }
   if (ws) {
     try { ws.close(); } catch (e) { }
     ws = null;
@@ -1052,7 +1189,7 @@ function stop() {
   $("led").classList.remove("on"); $("powerTxt").textContent = t("powerOff");
   $("startBtn").textContent = t("btnStart");
   $("startBtn").classList.remove("danger");
-  $("bigNote").textContent = "––"; litPcs = []; drawFB();
+  $("bigNote").textContent = "––"; litPcs = []; updateFretboardLit();
   updateTunerUI([]);
   refreshDynamic();
 }
@@ -1109,6 +1246,16 @@ function quizSolved() {
   setTimeout(() => { if (running && quizMode) newQuiz(); }, 900);
 }
 
+let masterSynthBus = null;
+function getMasterSynthBus() {
+  if (!masterSynthBus && audioCtx) {
+    masterSynthBus = audioCtx.createGain();
+    masterSynthBus.gain.setValueAtTime(1.0, audioCtx.currentTime);
+    masterSynthBus.connect(audioCtx.destination);
+  }
+  return masterSynthBus || (audioCtx ? audioCtx.destination : null);
+}
+
 function playMidiNote(midi) {
   try { ensureAudioCtx(); } catch (e) { return; }
   const freq = midiToFreq(midi);
@@ -1123,7 +1270,8 @@ function playMidiNote(midi) {
   gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 1.2);
 
   osc.connect(gain);
-  gain.connect(audioCtx.destination);
+  const dest = getMasterSynthBus();
+  if (dest) gain.connect(dest);
 
   osc.start(audioCtx.currentTime);
   osc.stop(audioCtx.currentTime + 1.2);
@@ -1152,7 +1300,8 @@ function playJamSynthChord(rootPcVal, isMinor, durationSec = 2.0) {
     gain.gain.exponentialRampToValueAtTime(0.0001, stopTime);
 
     osc.connect(gain);
-    gain.connect(audioCtx.destination);
+    const dest = getMasterSynthBus();
+    if (dest) gain.connect(dest);
 
     osc.start(startTime);
     osc.stop(stopTime);
@@ -1173,7 +1322,8 @@ function playMetronomeClick(isDownbeat) {
   gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.05);
 
   osc.connect(gain);
-  gain.connect(audioCtx.destination);
+  const dest = getMasterSynthBus();
+  if (dest) gain.connect(dest);
 
   osc.start(audioCtx.currentTime);
   osc.stop(audioCtx.currentTime + 0.05);
@@ -1382,12 +1532,319 @@ function rebuildScaleSel() {
 function rebuildTuningSel() {
   const sel = $("tuningSel"); if (!sel) return;
   sel.innerHTML = "";
-  TUNING_IDS.forEach(id => {
+  const tDict = getTuningsForInstrument();
+  Object.keys(tDict).forEach(id => {
     const o = document.createElement("option");
     o.value = id; o.textContent = t("tuning_" + id);
     sel.appendChild(o);
   });
+  if (!tDict[currentTuningId]) {
+    currentTuningId = Object.keys(tDict)[0];
+  }
   sel.value = currentTuningId;
+}
+
+function setInstrument(instr) {
+  currentInstrument = instr;
+  const tDict = getTuningsForInstrument();
+  currentTuningId = Object.keys(tDict)[0];
+  strings = [...tDict[currentTuningId]];
+
+  if (analyser) {
+    analyser.fftSize = (currentInstrument === "bass") ? 4096 : 2048;
+    buf = new Float32Array(analyser.fftSize);
+  }
+
+  const accTunerTitle = document.querySelector("#accItemTuner .acc-title");
+  if (accTunerTitle) {
+    accTunerTitle.textContent = (currentInstrument === "bass") ? t("accTunerBass") : t("accTuner");
+  }
+
+  const bassBox = $("bassGrooveHintBox");
+  if (bassBox) {
+    bassBox.style.display = (currentInstrument === "bass") ? "block" : "none";
+  }
+
+  rebuildTuningSel();
+  rebuildCustomTuningUI();
+  rebuildTunerUI();
+  drawFB();
+}
+
+// ---------- 3-Tier Recording Studio & Smart Replay Engine ----------
+let isRecording = false;
+let recStartTime = 0;
+let recTimerInterval = null;
+let mediaRecorder = null;
+let recDestNode = null;
+let recordedAudioChunks = [];
+let recordedAudioBlob = null;
+let recordedAudioUrl = null;
+let recordingTimeline = [];
+let replayRaf = null;
+
+function audioBufferToWav(buffer) {
+  const numChannels = buffer.numberOfChannels;
+  const sampleRate = buffer.sampleRate;
+  const format = 1; // PCM
+  const bitDepth = 16;
+  const bytesPerSample = bitDepth / 8;
+  const blockAlign = numChannels * bytesPerSample;
+  const dataLength = buffer.length * blockAlign;
+  const bufferLength = 44 + dataLength;
+
+  const arrayBuffer = new ArrayBuffer(bufferLength);
+  const view = new DataView(arrayBuffer);
+
+  function writeString(offset, string) {
+    for (let i = 0; i < string.length; i++) {
+      view.setUint8(offset + i, string.charCodeAt(i));
+    }
+  }
+
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + dataLength, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, format, true);
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitDepth, true);
+  writeString(36, 'data');
+  view.setUint32(40, dataLength, true);
+
+  let offset = 44;
+  for (let i = 0; i < buffer.length; i++) {
+    for (let ch = 0; ch < numChannels; ch++) {
+      let sample = buffer.getChannelData(ch)[i];
+      sample = Math.max(-1, Math.min(1, sample));
+      view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+      offset += 2;
+    }
+  }
+
+  return new Blob([view], { type: 'audio/wav' });
+}
+
+function startRecording() {
+  const recMode = $("recModeSel") ? $("recModeSel").value : "browser";
+  const shouldMix = $("recMixCheck") ? $("recMixCheck").checked : true;
+
+  isRecording = true;
+  recStartTime = Date.now();
+  recordingTimeline = [];
+
+  const btn = $("btnRecordToggle");
+  if (btn) btn.classList.add("recording");
+  if ($("btnRecordTxt")) $("btnRecordTxt").textContent = t("btnRecStop");
+  const timerBadge = $("recTimerBadge");
+  if (timerBadge) timerBadge.style.display = "inline-flex";
+  if ($("recTimerTxt")) $("recTimerTxt").textContent = "00:00";
+  if ($("asioRecNotice")) $("asioRecNotice").style.display = "none";
+  if ($("recResultsSection")) $("recResultsSection").style.display = "none";
+
+  recTimerInterval = setInterval(() => {
+    const elapsedSec = Math.floor((Date.now() - recStartTime) / 1000);
+    const mins = String(Math.floor(elapsedSec / 60)).padStart(2, "0");
+    const secs = String(elapsedSec % 60).padStart(2, "0");
+    if ($("recTimerTxt")) $("recTimerTxt").textContent = `${mins}:${secs}`;
+  }, 500);
+
+  if (recMode === "asio") {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "start_asio_recording" }));
+    }
+  } else {
+    try {
+      ensureAudioCtx();
+      recDestNode = audioCtx.createMediaStreamDestination();
+
+      if (source) {
+        try { source.connect(recDestNode); } catch (e) { }
+      }
+      if (shouldMix) {
+        const bus = getMasterSynthBus();
+        if (bus) {
+          try { bus.connect(recDestNode); } catch (e) { }
+        }
+      }
+
+      recordedAudioChunks = [];
+      const options = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? { mimeType: "audio/webm;codecs=opus" }
+        : {};
+      mediaRecorder = new MediaRecorder(recDestNode.stream, options);
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          recordedAudioChunks.push(e.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        if (recordedAudioChunks.length === 0) return;
+        const rawBlob = new Blob(recordedAudioChunks, { type: mediaRecorder.mimeType || "audio/webm" });
+        try {
+          const arrayBuf = await rawBlob.arrayBuffer();
+          const audioBuf = await audioCtx.decodeAudioData(arrayBuf);
+          recordedAudioBlob = audioBufferToWav(audioBuf);
+        } catch (e) {
+          recordedAudioBlob = rawBlob;
+        }
+
+        if (recordedAudioUrl) URL.revokeObjectURL(recordedAudioUrl);
+        recordedAudioUrl = URL.createObjectURL(recordedAudioBlob);
+
+        const player = $("recAudioPlayer");
+        if (player) {
+          player.src = recordedAudioUrl;
+          player.load();
+        }
+
+        finishRecordingAnalysis();
+      };
+
+      mediaRecorder.start(200);
+    } catch (err) {
+      console.error("Failed to start MediaRecorder:", err);
+      $("err").textContent = `녹음 시작 실패: ${err.message}`;
+    }
+  }
+}
+
+function stopRecording() {
+  if (!isRecording) return;
+  isRecording = false;
+
+  if (recTimerInterval) {
+    clearInterval(recTimerInterval);
+    recTimerInterval = null;
+  }
+
+  const btn = $("btnRecordToggle");
+  if (btn) btn.classList.remove("recording");
+  if ($("btnRecordTxt")) $("btnRecordTxt").textContent = t("btnRecStart");
+  const timerBadge = $("recTimerBadge");
+  if (timerBadge) timerBadge.style.display = "none";
+
+  const recMode = $("recModeSel") ? $("recModeSel").value : "browser";
+
+  if (recMode === "asio") {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "stop_asio_recording" }));
+    }
+    finishRecordingAnalysis();
+  } else {
+    if (mediaRecorder && mediaRecorder.state !== "inactive") {
+      try { mediaRecorder.stop(); } catch (e) { }
+    }
+    if (recDestNode) {
+      if (source) { try { source.disconnect(recDestNode); } catch (e) { } }
+      const bus = getMasterSynthBus();
+      if (bus) { try { bus.disconnect(recDestNode); } catch (e) { } }
+      recDestNode = null;
+    }
+  }
+}
+
+function finishRecordingAnalysis() {
+  if ($("recResultsSection")) $("recResultsSection").style.display = "flex";
+
+  let totalNotes = 0;
+  let inScaleCount = 0;
+  let totalCentsAbs = 0;
+
+  let lastMidi = null;
+  for (let i = 0; i < recordingTimeline.length; i++) {
+    const ev = recordingTimeline[i];
+    if (ev.midi !== lastMidi) {
+      totalNotes++;
+      if (ev.inScale) inScaleCount++;
+      totalCentsAbs += Math.abs(ev.cents);
+      lastMidi = ev.midi;
+    }
+  }
+
+  const accuracyPct = totalNotes > 0 ? Math.round((inScaleCount / totalNotes) * 100) : 100;
+  const avgCents = totalNotes > 0 ? (totalCentsAbs / totalNotes) : 0;
+  const stabilityPct = Math.max(0, Math.min(100, Math.round(100 - avgCents * 2.5)));
+
+  if ($("repTotalNotes")) $("repTotalNotes").textContent = totalNotes;
+  if ($("repAccuracy")) {
+    $("repAccuracy").textContent = `${accuracyPct}%`;
+    $("repAccuracy").className = `stat-val ${accuracyPct >= 80 ? "ok" : "tone"}`;
+  }
+  if ($("repStability")) {
+    $("repStability").textContent = `${stabilityPct}%`;
+    $("repStability").className = `stat-val ${stabilityPct >= 80 ? "ok" : "tone"}`;
+  }
+}
+
+function startSyncReplay() {
+  const player = $("recAudioPlayer");
+  if (!player || !player.src) return;
+
+  if (replayRaf) {
+    cancelAnimationFrame(replayRaf);
+    replayRaf = null;
+  }
+
+  player.currentTime = 0;
+  player.play();
+
+  const v = $("verdict");
+  function syncTick() {
+    if (player.paused || player.ended) {
+      litPcs = [];
+      updateFretboardLit();
+      $("needle").style.left = "50%";
+      return;
+    }
+
+    const currentT = player.currentTime;
+    let currentEvent = null;
+    for (let i = recordingTimeline.length - 1; i >= 0; i--) {
+      if (recordingTimeline[i].t <= currentT && currentT - recordingTimeline[i].t < 0.25) {
+        currentEvent = recordingTimeline[i];
+        break;
+      }
+    }
+
+    if (currentEvent) {
+      litPcs = [pc(currentEvent.midi)];
+      updateFretboardLit();
+      $("bigNote").textContent = currentEvent.note;
+      $("degTxt").textContent = currentEvent.deg ? `${t("degPrefix")}${currentEvent.deg}` : "";
+      $("needle").style.left = `${50 + Math.max(-50, Math.min(50, currentEvent.cents))}%`;
+      if (v) {
+        v.textContent = currentEvent.inScale ? t("verdictInScale") : t("verdictOutScale");
+        v.className = `verdict ${currentEvent.inScale ? "ok" : "no"}`;
+      }
+    } else {
+      litPcs = [];
+      updateFretboardLit();
+      $("needle").style.left = "50%";
+    }
+
+    replayRaf = requestAnimationFrame(syncTick);
+  }
+
+  player.onended = () => {
+    litPcs = [];
+    updateFretboardLit();
+    if ($("bigNote")) $("bigNote").textContent = "––";
+    if ($("degTxt")) $("degTxt").textContent = "";
+    if ($("needle")) $("needle").style.left = "50%";
+    if (v) {
+      v.textContent = t("verdictIdle");
+      v.className = "verdict idle";
+    }
+  };
+
+  syncTick();
 }
 
 function buildKeySel() {
@@ -1633,15 +2090,22 @@ function bindEvents() {
       if (quizMode) newQuiz();
     };
   }
+  if ($("instrSel")) {
+    $("instrSel").onchange = e => {
+      setInstrument(e.target.value);
+    };
+  }
+
   if ($("tuningSel")) {
     $("tuningSel").onchange = e => {
       currentTuningId = e.target.value;
-      if (TUNINGS[currentTuningId]) {
-        strings = [...TUNINGS[currentTuningId]];
-        for (let s = 0; s < 6; s++) {
+      const tDict = getTuningsForInstrument();
+      if (tDict[currentTuningId]) {
+        strings = [...tDict[currentTuningId]];
+        for (let s = 0; s < strings.length; s++) {
           if ($("strSel_" + s)) $("strSel_" + s).value = strings[s];
         }
-        updateTunerLabels();
+        rebuildTunerUI();
         drawFB();
       }
     };
@@ -1652,15 +2116,39 @@ function bindEvents() {
       tuningMode = e.target.value;
       if ($("tuningPresetField")) $("tuningPresetField").style.display = (tuningMode === "preset") ? "block" : "none";
       if ($("tuningCustomField")) $("tuningCustomField").style.display = (tuningMode === "custom") ? "block" : "none";
+      const tDict = getTuningsForInstrument();
       if (tuningMode === "preset") {
-        if (TUNINGS[currentTuningId]) strings = [...TUNINGS[currentTuningId]];
+        if (tDict[currentTuningId]) strings = [...tDict[currentTuningId]];
       } else {
-        for (let s = 0; s < 6; s++) {
+        for (let s = 0; s < strings.length; s++) {
           if ($("strSel_" + s)) strings[s] = parseInt($("strSel_" + s).value, 10);
         }
       }
-      updateTunerLabels();
+      rebuildTunerUI();
       drawFB();
+    };
+  }
+
+  if ($("btnRecordToggle")) {
+    $("btnRecordToggle").onclick = () => {
+      if (isRecording) stopRecording();
+      else startRecording();
+    };
+  }
+
+  if ($("btnDownloadWav")) {
+    $("btnDownloadWav").onclick = () => {
+      if (!recordedAudioBlob) return;
+      const a = document.createElement("a");
+      a.href = recordedAudioUrl;
+      a.download = `Recording_${currentInstrument}_${new Date().toISOString().replace(/[:.]/g, "-")}.wav`;
+      a.click();
+    };
+  }
+
+  if ($("btnSyncReplay")) {
+    $("btnSyncReplay").onclick = () => {
+      startSyncReplay();
     };
   }
 
@@ -1808,12 +2296,18 @@ function bindEvents() {
   }
 }
 
-function initCustomTuningSel() {
-  for (let s = 0; s < 6; s++) {
-    const sel = $("strSel_" + s);
-    if (!sel) continue;
-    sel.innerHTML = "";
-    for (let m = 36; m <= 71; m++) {
+function rebuildCustomTuningUI() {
+  const bar = $("customStringsBar");
+  if (!bar) return;
+  bar.innerHTML = "";
+  const numStrings = strings.length;
+  const minMidi = (currentInstrument === "bass") ? 23 : 36;
+  const maxMidi = (currentInstrument === "bass") ? 55 : 72;
+
+  for (let s = 0; s < numStrings; s++) {
+    const sel = document.createElement("select");
+    sel.id = "strSel_" + s;
+    for (let m = minMidi; m <= maxMidi; m++) {
       const o = document.createElement("option");
       o.value = m;
       const octave = Math.floor(m / 12) - 1;
@@ -1823,9 +2317,10 @@ function initCustomTuningSel() {
     sel.value = strings[s];
     sel.onchange = () => {
       strings[s] = parseInt(sel.value, 10);
-      updateTunerLabels();
+      rebuildTunerUI();
       drawFB();
     };
+    bar.appendChild(sel);
   }
 }
 
@@ -1839,12 +2334,39 @@ applyStaticI18n();
 buildKeySel();
 rebuildScaleSel();
 rebuildTuningSel();
-initCustomTuningSel();
+rebuildCustomTuningUI();
+rebuildTunerUI();
 rebuildVoicingSel();
 initSlideToggles();
 initAccordions();
 bindEvents();
 initDeviceSel();
 listOutputDevices();
-updateTunerLabels();
 drawFB();
+
+// URL hash handler for direct views & deep-linking (#bass, #drawer, #recording)
+function handleHashRoute() {
+  const hash = window.location.hash.toLowerCase();
+  if (hash.includes("bass")) {
+    const sel = $("instrSel");
+    if (sel && sel.value !== "bass") {
+      sel.value = "bass";
+      sel.dispatchEvent(new Event("change"));
+    }
+  }
+  if (hash.includes("drawer") || hash.includes("rec") || hash.includes("recording")) {
+    const drawer = $("sideDrawer");
+    const backdrop = $("sideDrawerBackdrop");
+    if (drawer) drawer.classList.add("open");
+    if (backdrop) backdrop.classList.add("open");
+    if (hash.includes("rec") || hash.includes("recording")) {
+      const accHeaders = document.querySelectorAll(".accordion-header");
+      if (accHeaders && accHeaders[2]) {
+        const item = accHeaders[2].closest(".accordion-item");
+        if (item) item.classList.add("expanded");
+      }
+    }
+  }
+}
+handleHashRoute();
+window.addEventListener("hashchange", handleHashRoute);

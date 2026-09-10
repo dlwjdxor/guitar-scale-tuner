@@ -5,12 +5,16 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Scales, heard. 🎸</title>
-  <meta name="description" content="Fretboard scale guide with live guitar pitch recognition.">
+  <meta name="description" content="Fretboard scale guide with live guitar & bass pitch recognition.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link
     href="https://fonts.googleapis.com/css2?family=Oswald:wght@300;500;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap"
     rel="stylesheet">
+  <link rel="icon" type="image/svg+xml" href="src/favicon.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon.png">
+  <link rel="icon" href="favicon.ico">
+  <link rel="apple-touch-icon" href="favicon.png">
   <link rel="stylesheet" href="src/style.css">
 </head>
 
@@ -43,7 +47,7 @@
         </div>
         <select id="langSel" class="compact-select lang-select"></select>
 
-        <!-- Prominent Settings Drawer Trigger Button (Matching Screenshot Style) -->
+        <!-- Prominent Settings Drawer Trigger Button -->
         <button id="btnToggleSettings" class="btn-settings-prominent">
           <span class="settings-gear">⚙️</span>
           <span data-i18n="btnSettings">설정</span>
@@ -87,8 +91,15 @@
 
         <!-- Fretboard Options & Quick Controls Card -->
         <div class="panel control-card">
-          <!-- Key / Scale / Chord Primary Selectors -->
+          <!-- Primary Selectors (Instrument / Key / Scale / Chord) -->
           <div class="fretboard-selectors">
+            <div class="compact-field instr-field">
+              <small data-i18n="lblInstrument">Instrument</small>
+              <select id="instrSel" class="select-styled">
+                <option value="guitar" data-i18n="instrGuitar">🎸 6현 기타</option>
+                <option value="bass" data-i18n="instrBass">🎸 4현 베이스</option>
+              </select>
+            </div>
             <div class="compact-field key-field">
               <small data-i18n="lblKey">Key</small>
               <select id="keySel" class="select-styled"></select>
@@ -179,7 +190,7 @@
     <div class="drawer-header">
       <div class="drawer-title-box">
         <span class="drawer-title" data-i18n="drawerTitle">⚙️ 설정 & 보조 도구</span>
-        <span class="drawer-sub" data-i18n="drawerSub">튜너, 백킹 트랙, 스케일 스캐너 및 오디오 세부 설정</span>
+        <span class="drawer-sub" data-i18n="drawerSub">튜너, 잼 트랙, 레코더, 스케일 스캐너 및 오디오 세부 설정</span>
       </div>
       <button id="btnCloseDrawer" class="btn-close-drawer">✕</button>
     </div>
@@ -188,7 +199,7 @@
     <div class="drawer-body">
       <div class="accordion-stack">
 
-        <!-- ACCORDION 1: 6-STRING TUNER & PITCH BENDING ANALYZER -->
+        <!-- ACCORDION 1: 6-STRING / 4-STRING TUNER & PITCH BENDING ANALYZER -->
         <div class="accordion-item" id="accItemTuner">
           <div class="accordion-header" data-target="accContentTuner">
             <div class="acc-title-group">
@@ -200,14 +211,7 @@
           
           <div class="accordion-content" id="accContentTuner">
             <div class="tuner-inner-grid">
-              <div class="tuner-layout" id="tunerLayout">
-                <div class="tuner-string" data-string-idx="5"><span class="string-label">6E</span><div class="tuning-peg"></div></div>
-                <div class="tuner-string" data-string-idx="4"><span class="string-label">5A</span><div class="tuning-peg"></div></div>
-                <div class="tuner-string" data-string-idx="3"><span class="string-label">4D</span><div class="tuning-peg"></div></div>
-                <div class="tuner-string" data-string-idx="2"><span class="string-label">3G</span><div class="tuning-peg"></div></div>
-                <div class="tuner-string" data-string-idx="1"><span class="string-label">2B</span><div class="tuning-peg"></div></div>
-                <div class="tuner-string" data-string-idx="0"><span class="string-label">1E</span><div class="tuning-peg"></div></div>
-              </div>
+              <div class="tuner-layout" id="tunerLayout"></div>
               
               <div class="pitch-tracker-box">
                 <div class="tracker-header">
@@ -295,7 +299,100 @@
           </div>
         </div>
 
-        <!-- ACCORDION 3: REAL-TIME SCALE SCANNER -->
+        <!-- ACCORDION 3: RECORDING STUDIO & SMART REPLAY -->
+        <div class="accordion-item" id="accItemRecorder">
+          <div class="accordion-header" data-target="accContentRecorder">
+            <div class="acc-title-group">
+              <span class="acc-icon">🎙️</span>
+              <span class="acc-title" data-i18n="accRecorder">레코딩 스튜디오 & 스마트 연주 복기</span>
+            </div>
+            <span class="acc-chevron">▾</span>
+          </div>
+
+          <div class="accordion-content" id="accContentRecorder">
+            <div class="studio-tool-card">
+              <div class="card-header">
+                <div class="card-h" data-i18n="cardRecorder">Recording Studio</div>
+                <div class="card-sub" data-i18n="subRecorder">Record performance, save lossless WAV & sync timeline replay</div>
+              </div>
+
+              <!-- Recording Configuration -->
+              <div class="rec-config-grid">
+                <div class="compact-field" style="flex: 1;">
+                  <small>Recording Engine</small>
+                  <select id="recModeSel" class="select-styled">
+                    <option value="browser" data-i18n="recModeBrowser">🎧 브라우저 즉석 녹음</option>
+                    <option value="asio" data-i18n="recModeAsio">⚡ ASIO 무손실 WAV 저장</option>
+                  </select>
+                </div>
+
+                <label class="auto-speed-check" style="margin-top: 18px;">
+                  <input type="checkbox" id="recMixCheck" checked>
+                  <span data-i18n="recSourceMix">반주(백킹+메트로놈) 믹싱</span>
+                </label>
+              </div>
+
+              <!-- Recording Action Controls -->
+              <div class="rec-action-bar">
+                <button id="btnRecordToggle" class="btn-primary-action btn-record">
+                  <span class="rec-dot-icon"></span>
+                  <span id="btnRecordTxt" data-i18n="btnRecStart">● REC 녹음 시작</span>
+                </button>
+                <div id="recTimerBadge" class="rec-timer-badge" style="display: none;">
+                  <span class="pulse-dot"></span>
+                  <span id="recTimerTxt">00:00</span>
+                </div>
+              </div>
+
+              <!-- ASIO Saved Notification Box -->
+              <div id="asioRecNotice" class="rec-notice-box" style="display: none;">
+                <span class="rec-notice-icon">💾</span>
+                <div class="rec-notice-body">
+                  <strong data-i18n="recAsioSaved">ASIO 무손실 WAV 저장 완료</strong>
+                  <small id="asioRecFileTxt" class="rec-filename"></small>
+                </div>
+              </div>
+
+              <!-- Audio Player & Replay Actions (Visible after recording) -->
+              <div id="recResultsSection" class="rec-results-section" style="display: none;">
+                <audio id="recAudioPlayer" controls class="custom-audio-player"></audio>
+                
+                <div class="rec-playback-btns">
+                  <button id="btnDownloadWav" class="btn-ghost-sm" data-i18n="btnRecDownload">💾 WAV 다운로드</button>
+                  <button id="btnSyncReplay" class="btn-primary-action" data-i18n="btnReplaySync">▶ 지판 싱크 복기 (Replay)</button>
+                </div>
+
+                <!-- Smart Analysis Scorecard -->
+                <div class="rec-report-card">
+                  <div class="report-title" data-i18n="recReportTitle">📊 스마트 연주 분석 결과</div>
+                  <div class="report-stats-grid">
+                    <div class="report-stat-item">
+                      <span class="stat-lbl" data-i18n="recTotalNotes">총 연주 음</span>
+                      <strong id="repTotalNotes" class="stat-val">0</strong>
+                    </div>
+                    <div class="report-stat-item">
+                      <span class="stat-lbl" data-i18n="recAccuracy">스케일 적중률</span>
+                      <strong id="repAccuracy" class="stat-val ok">100%</strong>
+                    </div>
+                    <div class="report-stat-item">
+                      <span class="stat-lbl" data-i18n="recStability">피치 안정도</span>
+                      <strong id="repStability" class="stat-val tone">100%</strong>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Bass Groove Education Hint (Displays when Bass is selected) -->
+              <div id="bassGrooveHintBox" class="bass-hint-box" style="display: none;">
+                <div class="bass-hint-title" data-i18n="bassGrooveGuide">4현 베이스 그루브 가이드</div>
+                <p class="bass-hint-desc" data-i18n="bassGrooveDesc">베이스 연주의 핵심인 1도(루트), 5도, 8도(옥타브) 포지션을 확인하세요.</p>
+              </div>
+
+            </div>
+          </div>
+        </div>
+
+        <!-- ACCORDION 4: REAL-TIME SCALE SCANNER -->
         <div class="accordion-item" id="accItemScanner">
           <div class="accordion-header" data-target="accContentScanner">
             <div class="acc-title-group">
@@ -325,7 +422,7 @@
           </div>
         </div>
 
-        <!-- ACCORDION 4: AUDIO SENSITIVITY & GUITAR TUNING SETTINGS -->
+        <!-- ACCORDION 5: AUDIO SENSITIVITY & GUITAR / BASS TUNING SETTINGS -->
         <div class="accordion-item" id="accItemSettings">
           <div class="accordion-header" data-target="accContentSettings">
             <div class="acc-title-group">
@@ -382,9 +479,9 @@
                 </div>
               </div>
 
-              <!-- Guitar Tuning Setup -->
+              <!-- Guitar / Bass Tuning Setup -->
               <div class="settings-group">
-                <div class="settings-group-title">🎸 Guitar Tuning Setup</div>
+                <div class="settings-group-title">🎸 Tuning Setup</div>
                 <div class="settings-row">
                   <div class="compact-field">
                     <small data-i18n="lblTuning">Tuning Mode</small>
@@ -400,15 +497,8 @@
                 </div>
 
                 <div id="tuningCustomField" style="display: none; margin-top: 10px;">
-                  <small data-i18n="lblTuningCustom" style="color: var(--muted); font-size: 11px;">Custom Strings (1-6)</small>
-                  <div class="custom-strings-bar">
-                    <select id="strSel_0" class="str-sel"></select>
-                    <select id="strSel_1" class="str-sel"></select>
-                    <select id="strSel_2" class="str-sel"></select>
-                    <select id="strSel_3" class="str-sel"></select>
-                    <select id="strSel_4" class="str-sel"></select>
-                    <select id="strSel_5" class="str-sel"></select>
-                  </div>
+                  <small data-i18n="lblTuningCustom" style="color: var(--muted); font-size: 11px;">Custom Strings</small>
+                  <div class="custom-strings-bar" id="customStringsBar"></div>
                 </div>
               </div>
             </div>

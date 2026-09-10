@@ -13,9 +13,11 @@ def build():
         "--onedir",
         "--windowed",
         "--name", "GuitarScaleTuner",
+        "--icon", "favicon.ico",
         "--add-data", "index.html;.",
         "--add-data", "src;src",
-        "--add-data", "i18n.js;.",
+        "--add-data", "favicon.ico;.",
+        "--add-data", "favicon.png;.",
         "GuitarScaleTuner.py"
     ]
 
